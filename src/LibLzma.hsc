@@ -31,6 +31,9 @@ module LibLzma
 
     , CompressStream(..)
     , compressIO
+
+    , DecompressStream(..)
+    , decompressIO
     ) where
 
 import           Control.Applicative
@@ -299,4 +302,69 @@ compressIO parms = newEncodeLzmaStream parms >>= either throwIO go
                         | BS.null obuf -> next
                         | otherwise    -> return (CompressOutputAvailable obuf next)
                     _ -> throwIO rc
+
+--------------------------------------------------------------------------------
+
+data DecompressStream m =
+     DecompressInputRequired (ByteString -> m (DecompressStream m))
+   | DecompressOutputAvailable !ByteString (m (DecompressStream m))
+   | DecompressStreamEnd ByteString
+   | DecompressStreamError !LzmaRet -- TODO define subset-enum of LzmaRet
+
+decompressIO :: DecompressParams -> IO (DecompressStream IO)
+decompressIO parms = newDecodeLzmaStream parms >>= either (return . DecompressStreamError) go
+  where
+    bUFSIZ = 32752
+
+    go :: LzmaStream -> IO (DecompressStream IO)
+    go ls = return inputRequired
+      where
+        inputRequired = DecompressInputRequired goInput
+
+        goInput :: ByteString -> IO (DecompressStream IO)
+        goInput chunk
+          | BS.null chunk = goFinish
+          | otherwise = do
+            (rc, used, obuf) <- runLzmaStream ls chunk LzmaRun bUFSIZ
+
+            let chunk' = BS.drop used chunk
+
+            case rc of
+                LzmaRetOK
+                    | BS.null obuf -> do
+                        unless (used > 0) $
+                            fail "decompressIO: input chunk not consumed"
+                        withChunk (return inputRequired) goInput chunk'
+                    | otherwise    -> return (DecompressOutputAvailable obuf
+                                              (withChunk goDrain goInput chunk'))
+
+                LzmaRetStreamEnd
+                    | BS.null obuf -> return (DecompressStreamEnd chunk')
+                    | otherwise    -> return (DecompressOutputAvailable obuf
+                                              (return (DecompressStreamEnd chunk')))
+
+                _ -> return (DecompressStreamError rc)
+
+
+        goDrain, goFinish :: IO (DecompressStream IO)
+        goDrain  = goSync LzmaRun (return inputRequired)
+        goFinish = goSync LzmaFinish (return $ DecompressStreamError LzmaRetOK)
+
+        goSync :: LzmaAction -> IO (DecompressStream IO) -> IO (DecompressStream IO)
+        goSync action next = goSync'
+          where
+            goSync' = do
+                (rc, 0, obuf) <- runLzmaStream ls BS.empty action bUFSIZ
+                case rc of
+                  LzmaRetOK
+                    | BS.null obuf -> next
+                    | otherwise    -> return (DecompressOutputAvailable obuf goSync')
+
+                  LzmaRetStreamEnd
+                    | BS.null obuf -> eof0
+                    | otherwise    -> return (DecompressOutputAvailable obuf eof0)
+
+                  _ -> return (DecompressStreamError rc)
+
+            eof0 = return $ DecompressStreamEnd BS.empty
 
