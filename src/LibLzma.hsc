@@ -242,7 +242,7 @@ foreign import ccall "&hs_lzma_done"
 -- actually just depend on zlib at some point in the future
 
 data CompressStream m =
-     CompressInputRequired (ByteString -> m (CompressStream m))
+     CompressInputRequired (Maybe ByteString -> m (CompressStream m)) -- ^ 'Nothing' signals EOF
    | CompressOutputAvailable !ByteString (m (CompressStream m))
    | CompressStreamEnd
 
@@ -252,41 +252,53 @@ compressIO parms = newEncodeLzmaStream parms >>= either throwIO go
     bUFSIZ = 32752
 
     go :: LzmaStream -> IO (CompressStream IO)
-    go ls = return $ CompressInputRequired goInput
+    go ls = return inputRequired
       where
+        inputRequired = CompressInputRequired (maybe goFinish goInput)
+
         goInput :: ByteString -> IO (CompressStream IO)
         goInput chunk
-          | BS.null chunk = goFinish
-          | otherwise     = do
-              (rc, used, obuf) <- runLzmaStream ls chunk LzmaRun bUFSIZ
+          | BS.null chunk = goFlush
+          | otherwise = do
+            (rc, used, obuf) <- runLzmaStream ls chunk LzmaRun bUFSIZ
 
-              unless (used > 0) $ fail "compressIO: input chunk not consumed"
+            unless (used > 0) $ fail "compressIO: input chunk not consumed"
 
-              let chunk' = BS.drop used chunk
-
-              case rc of
-                  LzmaRetOK
-                      | BS.null obuf -> if BS.null chunk'
-                                        then return (CompressInputRequired goInput)
-                                        else goInput chunk'
-
-                      | otherwise -> return (CompressOutputAvailable obuf
-                                             (if BS.null chunk'
-                                              then return (CompressInputRequired goInput)
-                                              else goInput chunk'))
-
-                  _ -> throwIO rc
-
-        goFinish :: IO (CompressStream IO)
-        goFinish = do
-            (rc, 0, obuf) <- runLzmaStream ls BS.empty LzmaFinish bUFSIZ
+            let chunk' = BS.drop used chunk
 
             case rc of
                 LzmaRetOK
-                    | BS.null obuf -> fail "compressIO: empty output chunk"
-                    | otherwise    -> return (CompressOutputAvailable obuf goFinish)
-                LzmaRetStreamEnd
-                    | BS.null obuf -> return CompressStreamEnd
-                    | otherwise    -> return (CompressOutputAvailable obuf (return CompressStreamEnd))
+                    | BS.null obuf -> if BS.null chunk'
+                                      then return inputRequired
+                                      else goInput chunk'
+
+
+                    | otherwise -> return (CompressOutputAvailable obuf
+                                           (if BS.null chunk'
+                                            then return inputRequired
+                                            else goInput chunk'))
 
                 _ -> throwIO rc
+
+        goFlush :: IO (CompressStream IO)
+        goFlush = goSync LzmaSyncFlush (return inputRequired)
+
+        goFinish :: IO (CompressStream IO)
+        goFinish = goSync LzmaFinish (return CompressStreamEnd)
+
+        -- drain encoder till LzmaRetStreamEnd is reported
+        goSync :: LzmaAction -> IO (CompressStream IO) -> IO (CompressStream IO)
+        goSync LzmaRun _ = fail "goSync called with invalid argument"
+        goSync action next = goSync'
+          where
+            goSync' = do
+                (rc, 0, obuf) <- runLzmaStream ls BS.empty action bUFSIZ
+                case rc of
+                    LzmaRetOK
+                        | BS.null obuf -> fail ("compressIO: empty output chunk during " ++ show action)
+                        | otherwise    -> return (CompressOutputAvailable obuf goSync')
+                    LzmaRetStreamEnd
+                        | BS.null obuf -> next
+                        | otherwise    -> return (CompressOutputAvailable obuf next)
+                    _ -> throwIO rc
+
