@@ -62,9 +62,9 @@ wrapLzmaInStream ibs ls0 = do
             ibuf <- getChunk
 
             (rc, _, obuf) <- case ibuf of
-                Nothing -> runLzmaStream ls BS.empty True bUFSIZ
+                Nothing -> runLzmaStream ls BS.empty LzmaFinish bUFSIZ
                 Just bs -> do
-                    retval@(_, consumed, _) <- runLzmaStream ls bs False bUFSIZ
+                    retval@(_, consumed, _) <- runLzmaStream ls bs LzmaRun bUFSIZ
                     when (consumed < BS.length bs) $ do
                         Streams.unRead (BS.drop consumed bs) ibs
                     return retval

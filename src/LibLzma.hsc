@@ -27,6 +27,7 @@ module LibLzma
     , defaultCompressParams
 
     , runLzmaStream
+    , LzmaAction(..)
 
     , CompressStream(..)
     , compressIO
@@ -189,8 +190,12 @@ newEncodeLzmaStream (CompressParams {..}) = do
              (if compressLevelExtreme then (#const LZMA_PRESET_EXTREME) else 0)
     check = fromIntegrityCheck compressIntegrityCheck
 
-runLzmaStream :: LzmaStream -> ByteString -> Bool -> Int -> IO (LzmaRet,Int,ByteString)
-runLzmaStream (LS ls) ibs finish buflen
+
+data LzmaAction = LzmaRun | LzmaSyncFlush | LzmaFullFlush | LzmaFinish
+                deriving (Eq,Show,Read)
+
+runLzmaStream :: LzmaStream -> ByteString -> LzmaAction -> Int -> IO (LzmaRet,Int,ByteString)
+runLzmaStream (LS ls) ibs action0 buflen
   | buflen <= 0 = fail "runLzmaStream: invalid buflen argument"
   | otherwise = withForeignPtr ls $ \lsptr -> do
       BS.unsafeUseAsCStringLen ibs $ \(ibsptr, ibslen) -> do
@@ -210,7 +215,11 @@ runLzmaStream (LS ls) ibs finish buflen
 
           return (rc, fromIntegral consumed, obuf)
   where
-    action = if finish then (#const LZMA_FINISH) else (#const LZMA_RUN)
+    action = case action0 of
+        LzmaRun       -> #const LZMA_RUN
+        LzmaSyncFlush -> #const LZMA_SYNC_FLUSH
+        LzmaFullFlush -> #const LZMA_FULL_FLUSH
+        LzmaFinish    -> #const LZMA_FINISH
 
 ----------------------------------------------------------------------------
 -- trivial helper wrappers defined in ../cbits/lzma_wrapper.c
@@ -229,7 +238,8 @@ foreign import ccall "&hs_lzma_done"
 
 ----------------------------------------------------------------------------
 
--- type stolen from 'zlib', we may actually just depend on zlib at some point in the future
+-- type stolen from 'zlib' augmented with flushing support, we may
+-- actually just depend on zlib at some point in the future
 
 data CompressStream m =
      CompressInputRequired (ByteString -> m (CompressStream m))
@@ -248,7 +258,7 @@ compressIO parms = newEncodeLzmaStream parms >>= either throwIO go
         goInput chunk
           | BS.null chunk = goFinish
           | otherwise     = do
-              (rc, used, obuf) <- runLzmaStream ls chunk False bUFSIZ
+              (rc, used, obuf) <- runLzmaStream ls chunk LzmaRun bUFSIZ
 
               unless (used > 0) $ fail "compressIO: input chunk not consumed"
 
@@ -269,7 +279,7 @@ compressIO parms = newEncodeLzmaStream parms >>= either throwIO go
 
         goFinish :: IO (CompressStream IO)
         goFinish = do
-            (rc, 0, obuf) <- runLzmaStream ls BS.empty True bUFSIZ
+            (rc, 0, obuf) <- runLzmaStream ls BS.empty LzmaFinish bUFSIZ
 
             case rc of
                 LzmaRetOK
