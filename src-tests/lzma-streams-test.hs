@@ -11,7 +11,7 @@ import System.IO.Unsafe
 main :: IO ()
 main = defaultMain [ testGroup "System.IO.Streams.Lzma" tests ]
   where
-    tests =  [ test0, test1, prop1, prop2 ]
+    tests =  [ test0, test1, test2, prop1, prop2 ]
 
 test0 :: Test
 test0 = testCase "empty" $ (decode . encode) BS.empty @?= BS.empty
@@ -20,6 +20,11 @@ test1 :: Test
 test1 = testCase "hello" $ (decode . encode) bs @?= bs
   where
     bs = BS.pack [104,101,108,108,111]
+
+test2 :: Test
+test2 = testCase "10MiB" $ (decode . encode) bs @?= bs
+  where
+    bs = BS.replicate (10*1024*1024) 0xaa
 
 prop1 :: Test
 prop1 = testProperty "random" go
