@@ -80,10 +80,10 @@ toLzmaRet i = case i of
 
 -- | Integrity check type (only supported when compressing @.xz@ files)
 data IntegrityCheck = IntegrityCheckNone   -- ^ disable integrity check (not recommended)
-               | IntegrityCheckCrc32  -- ^ CRC32 using the polynomial from IEEE-802.3
-               | IntegrityCheckCrc64  -- ^ CRC64 using the polynomial from ECMA-182
-               | IntegrityCheckSha256 -- ^ SHA-256
-               deriving (Eq,Ord,Show)
+                    | IntegrityCheckCrc32  -- ^ CRC32 using the polynomial from IEEE-802.3
+                    | IntegrityCheckCrc64  -- ^ CRC64 using the polynomial from ECMA-182
+                    | IntegrityCheckSha256 -- ^ SHA-256
+                    deriving (Eq,Ord,Show)
 
 -- | Compression level presets that define the tradeoff between
 -- computational complexity and compression ratio
@@ -238,6 +238,12 @@ foreign import ccall "&hs_lzma_done"
 
 ----------------------------------------------------------------------------
 
+-- small helper
+withChunk :: t -> (ByteString -> t) -> ByteString -> t
+withChunk emptyChunk nemptyChunk chunk
+  | BS.null chunk = emptyChunk
+  | otherwise     = nemptyChunk chunk
+
 -- type stolen from 'zlib' augmented with flushing support, we may
 -- actually just depend on zlib at some point in the future
 
@@ -268,22 +274,14 @@ compressIO parms = newEncodeLzmaStream parms >>= either throwIO go
 
             case rc of
                 LzmaRetOK
-                    | BS.null obuf -> if BS.null chunk'
-                                      then return inputRequired
-                                      else goInput chunk'
-
-
-                    | otherwise -> return (CompressOutputAvailable obuf
-                                           (if BS.null chunk'
-                                            then return inputRequired
-                                            else goInput chunk'))
+                  | BS.null obuf -> withChunk (return inputRequired) goInput chunk'
+                  | otherwise    -> return (CompressOutputAvailable obuf
+                                            (withChunk (return inputRequired) goInput chunk'))
 
                 _ -> throwIO rc
 
-        goFlush :: IO (CompressStream IO)
-        goFlush = goSync LzmaSyncFlush (return inputRequired)
-
-        goFinish :: IO (CompressStream IO)
+        goFlush, goFinish :: IO (CompressStream IO)
+        goFlush  = goSync LzmaSyncFlush (return inputRequired)
         goFinish = goSync LzmaFinish (return CompressStreamEnd)
 
         -- drain encoder till LzmaRetStreamEnd is reported
