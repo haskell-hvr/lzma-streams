@@ -65,7 +65,7 @@ wrapLzmaInStream ibs ls0 = do
                 Nothing -> runLzmaStream ls BS.empty LzmaFinish bUFSIZ
                 Just bs -> do
                     retval@(_, consumed, _) <- runLzmaStream ls bs LzmaRun bUFSIZ
-                    when (consumed < BS.length bs) $ do
+                    when (consumed < BS.length bs) $
                         Streams.unRead (BS.drop consumed bs) ibs
                     return retval
 
@@ -75,7 +75,7 @@ wrapLzmaInStream ibs ls0 = do
                     throwIO rc
 
             case rc of
-                LzmaRetOK -> if (BS.null obuf)
+                LzmaRetOK -> if BS.null obuf
                              then goRight ls -- feed de/encoder some more
                              else return (Just obuf)
 
@@ -141,8 +141,7 @@ compressWith parms obs = do
             _ -> fail "compressWith[EOF]:  unexpected state"
 
     -- Drain output from CompressStream
-    goOutput st@(CompressInputRequired _) = do
-        return st
+    goOutput st@(CompressInputRequired _) = return st
     goOutput (CompressOutputAvailable obuf next) = do
         Streams.write (Just obuf) obs
         goOutput =<< next

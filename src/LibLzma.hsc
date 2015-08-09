@@ -197,7 +197,7 @@ data LzmaAction = LzmaRun | LzmaSyncFlush | LzmaFullFlush | LzmaFinish
 runLzmaStream :: LzmaStream -> ByteString -> LzmaAction -> Int -> IO (LzmaRet,Int,ByteString)
 runLzmaStream (LS ls) ibs action0 buflen
   | buflen <= 0 = fail "runLzmaStream: invalid buflen argument"
-  | otherwise = withForeignPtr ls $ \lsptr -> do
+  | otherwise = withForeignPtr ls $ \lsptr ->
       BS.unsafeUseAsCStringLen ibs $ \(ibsptr, ibslen) -> do
           (obuf,rc) <- BS.createAndTrim' buflen $ \bufptr -> do
               rc' <- c_hs_lzma_run lsptr action (castPtr ibsptr) ibslen bufptr buflen
