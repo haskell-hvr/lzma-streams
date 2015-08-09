@@ -32,6 +32,7 @@ import           Control.Monad
 import           Data.ByteString   (ByteString)
 import qualified Data.ByteString   as BS
 import           Data.IORef
+import           Data.Maybe
 import           LibLzma
 import           System.IO.Streams (InputStream, OutputStream, makeInputStream,
                                     makeOutputStream)
@@ -46,55 +47,37 @@ decompress = decompressWith defaultDecompressParams
 --
 -- > decompressWith defaultDecompressParams { decompress... = ... }
 decompressWith :: DecompressParams -> InputStream ByteString -> IO (InputStream ByteString)
-decompressWith flags ibs
-    = newDecodeLzmaStream flags >>= either throwIO (wrapLzmaInStream ibs)
-
--- TODO: figure out sensible buffer-size & refactor into generic
--- incremental API in the style of zlib's incremental API
-wrapLzmaInStream :: InputStream ByteString -> LzmaStream -> IO (InputStream ByteString)
-wrapLzmaInStream ibs ls0 = do
-    st <- newIORef (Right ls0)
+decompressWith parms ibs = do
+    st <- newIORef =<< decompressIO parms
     makeInputStream (go st)
   where
-    go st = readIORef st >>= either goLeft goRight
-      where
-        goRight ls = do
-            ibuf <- getChunk
+    go stref = do
+        st' <- goFeed =<< readIORef stref
+        case st' of
+            DecompressInputRequired _ -> do
+                writeIORef stref st'
+                fail "the impossible happened"
 
-            (rc, _, obuf) <- case ibuf of
-                Nothing -> runLzmaStream ls BS.empty LzmaFinish bUFSIZ
-                Just bs -> do
-                    retval@(_, consumed, _) <- runLzmaStream ls bs LzmaRun bUFSIZ
-                    when (consumed < BS.length bs) $
-                        Streams.unRead (BS.drop consumed bs) ibs
-                    return retval
+            DecompressOutputAvailable outb next -> do
+                writeIORef stref =<< next
+                return (Just outb)
 
-            unless (rc == LzmaRetOK) $ do
-                writeIORef st (Left rc)
-                unless (rc == LzmaRetStreamEnd) $
-                    throwIO rc
+            DecompressStreamEnd leftover -> do
+                unless (BS.null leftover) $ do
+                    Streams.unRead leftover ibs
+                writeIORef stref (DecompressStreamEnd BS.empty)
+                return Nothing
 
-            case rc of
-                LzmaRetOK -> if BS.null obuf
-                             then goRight ls -- feed de/encoder some more
-                             else return (Just obuf)
+            DecompressStreamError rc -> do
+                writeIORef stref st'
+                throwIO rc
 
-                LzmaRetStreamEnd -> do
-                    writeIORef st (Left rc)
-                    if BS.null obuf
-                        then return Nothing
-                        else return (Just obuf)
-
-                _ -> writeIORef st (Left rc) >> throwIO rc
-
-    goLeft err = case err of
-        LzmaRetStreamEnd -> return Nothing
-        _                -> throwIO err
-
-    bUFSIZ = 32752
+    -- feed engine
+    goFeed (DecompressInputRequired supply) =
+        goFeed =<< supply . fromMaybe BS.empty =<< getChunk
+    goFeed s = return s
 
     -- wrapper around 'read ibs' to retry until a non-empty ByteString or Nothing is returned
-    -- TODO: consider implementing flush semantics
     getChunk = do
         mbs <- Streams.read ibs
         case mbs of
