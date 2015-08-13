@@ -9,7 +9,7 @@ cache:
 
 before_cache:
   - rm -fv $HOME/.cabal/packages/hackage.haskell.org/build-reports.log
-  - rm -fv $HOME/.cabal/packages/hackage.haskell.org/00-index.tar.gz
+  - rm -fv $HOME/.cabal/packages/hackage.haskell.org/00-index.tar
 
 matrix:
   include:
@@ -37,6 +37,7 @@ install:
    then
      zcat $HOME/.cabal/packages/hackage.haskell.org/00-index.tar.gz >
           $HOME/.cabal/packages/hackage.haskell.org/00-index.tar;
+     ls -l $HOME/.cabal/packages/hackage.haskell.org/;
    fi
  - travis_retry cabal update -v3
  - sed -i 's/^jobs:/-- jobs:/' ${HOME}/.cabal/config
