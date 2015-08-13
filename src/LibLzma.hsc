@@ -251,7 +251,8 @@ withChunk emptyChunk nemptyChunk chunk
 -- actually just depend on zlib at some point in the future
 
 data CompressStream m =
-     CompressInputRequired (Maybe ByteString -> m (CompressStream m)) -- ^ 'Nothing' signals EOF
+     CompressInputRequired {- flush -}  (m (CompressStream m))
+                           {- supply -} (ByteString -> m (CompressStream m))
    | CompressOutputAvailable !ByteString (m (CompressStream m))
    | CompressStreamEnd
 
@@ -263,12 +264,10 @@ compressIO parms = newEncodeLzmaStream parms >>= either throwIO go
     go :: LzmaStream -> IO (CompressStream IO)
     go ls = return inputRequired
       where
-        inputRequired = CompressInputRequired (maybe goFinish goInput)
+        inputRequired = CompressInputRequired goFlush (withChunk goFinish goInput)
 
         goInput :: ByteString -> IO (CompressStream IO)
-        goInput chunk
-          | BS.null chunk = goFlush
-          | otherwise = do
+        goInput chunk = do
             (rc, used, obuf) <- runLzmaStream ls chunk LzmaRun bUFSIZ
 
             unless (used > 0) $ fail "compressIO: input chunk not consumed"
