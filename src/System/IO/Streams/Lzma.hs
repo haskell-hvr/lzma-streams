@@ -117,8 +117,8 @@ compressWith parms obs = do
         st <- readIORef stref
         st' <- case st of
             CompressInputRequired flush supply
-              | BS.null chunk -> goOutput =<< flush
-              | otherwise     -> goOutput =<< supply chunk
+              | BS.null chunk -> goOutput True =<< flush
+              | otherwise     -> goOutput False =<< supply chunk
             _ -> fail "compressWith: unexpected state"
         writeIORef stref st'
         case st' of
@@ -129,7 +129,7 @@ compressWith parms obs = do
     go stref Nothing = do
         st <- readIORef stref
         st' <- case st of
-            CompressInputRequired _ supply -> goOutput =<< supply BS.empty
+            CompressInputRequired _ supply -> goOutput False =<< supply BS.empty
             _ -> fail "compressWith[EOF]: unexpected state"
         writeIORef stref st'
         case st' of
@@ -137,10 +137,13 @@ compressWith parms obs = do
             _ -> fail "compressWith[EOF]:  unexpected state"
 
     -- Drain output from CompressStream
-    goOutput st@(CompressInputRequired _ _) = return st
-    goOutput (CompressOutputAvailable obuf next) = do
+    goOutput flush st@(CompressInputRequired _ _) = do
+        when flush $
+            Streams.write (Just BS.empty) obs
+        return st
+    goOutput flush (CompressOutputAvailable obuf next) = do
         Streams.write (Just obuf) obs
-        goOutput =<< next
-    goOutput st@CompressStreamEnd = do
+        goOutput flush =<< next
+    goOutput _ st@CompressStreamEnd = do
         Streams.write Nothing obs
         return st

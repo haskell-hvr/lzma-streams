@@ -4,6 +4,8 @@
 
 - `CompressParams` and `DecompressParams` constructors aren't exported anymore
 
+- Add support for flush-operation on `OutputStream ByteString`
+
 # 0.0.0.0
 
 Initial version
