@@ -14,41 +14,52 @@ module System.IO.Streams.Lzma
     ( -- * 'ByteString' decompression
       decompress
     , decompressWith
-    , defaultDecompressParams
-    , DecompressParams(..)
+    , Lzma.defaultDecompressParams
+    , Lzma.DecompressParams
+    , Lzma.compressIntegrityCheck
+    , Lzma.compressLevel
+    , Lzma.compressLevelExtreme
 
       -- * 'ByteString' compression
     , compress
     , compressWith
-    , defaultCompressParams
-    , CompressParams(..)
-    , IntegrityCheck(..)
-    , CompressionLevel(..)
+    , Lzma.defaultCompressParams
+    , Lzma.CompressParams
+    , Lzma.decompressTellNoCheck
+    , Lzma.decompressTellUnsupportedCheck
+    , Lzma.decompressTellAnyCheck
+    , Lzma.decompressConcatenated
+    , Lzma.decompressAutoDecoder
+    , Lzma.decompressMemLimit
+    , Lzma.IntegrityCheck(..)
+    , Lzma.CompressionLevel(..)
 
     ) where
 
+import           Codec.Compression.Lzma (DecompressStream(..), CompressStream(..))
+import qualified Codec.Compression.Lzma as Lzma
+
 import           Control.Exception
 import           Control.Monad
-import           Data.ByteString   (ByteString)
-import qualified Data.ByteString   as BS
+import           Data.ByteString        (ByteString)
+import qualified Data.ByteString        as BS
 import           Data.IORef
 import           Data.Maybe
-import           LibLzma
-import           System.IO.Streams (InputStream, OutputStream, makeInputStream,
-                                    makeOutputStream)
-import qualified System.IO.Streams as Streams
+import           System.IO.Streams      (InputStream, OutputStream,
+                                         makeInputStream, makeOutputStream)
+import qualified System.IO.Streams      as Streams
 
 -- | Decompress an 'InputStream' of strict 'ByteString's from the @.xz@ format
 decompress :: InputStream ByteString -> IO (InputStream ByteString)
-decompress = decompressWith defaultDecompressParams
+decompress = decompressWith Lzma.defaultDecompressParams
 
 -- | Like 'decompress' but with the ability to specify various decompression
 -- parameters. Typical usage:
 --
 -- > decompressWith defaultDecompressParams { decompress... = ... }
-decompressWith :: DecompressParams -> InputStream ByteString -> IO (InputStream ByteString)
+decompressWith :: Lzma.DecompressParams -> InputStream ByteString -> IO (InputStream ByteString)
 decompressWith parms ibs = do
-    st <- newIORef =<< decompressIO parms
+    st <- newIORef =<< Lzma.decompressIO parms
     makeInputStream (go st)
   where
     go stref = do
@@ -91,15 +102,15 @@ decompressWith parms ibs = do
 -- (in the @.xz@ format) into an 'OutputStream' that consumes
 -- uncompressed 'ByteString's
 compress :: OutputStream ByteString -> IO (OutputStream ByteString)
-compress = compressWith defaultCompressParams
+compress = compressWith Lzma.defaultCompressParams
 
 -- | Like 'compress' but with the ability to specify various compression
 -- parameters. Typical usage:
 --
 -- > compressWith defaultCompressParams { compress... = ... }
-compressWith :: CompressParams -> OutputStream ByteString -> IO (OutputStream ByteString)
+compressWith :: Lzma.CompressParams -> OutputStream ByteString -> IO (OutputStream ByteString)
 compressWith parms obs = do
-    st <- newIORef =<< compressIO parms
+    st <- newIORef =<< Lzma.compressIO parms
     makeOutputStream (go st)
   where
     go stref (Just chunk) = do
